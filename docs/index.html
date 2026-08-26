@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>湾区租房地图</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  html,body{margin:0;height:100%;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+  #map{position:absolute;top:0;bottom:0;left:0;right:0}
+  .panel{position:absolute;top:10px;right:10px;z-index:1000;background:#fff;border-radius:10px;
+    box-shadow:0 2px 10px rgba(0,0,0,.25);padding:12px 14px;font-size:13px;max-width:240px}
+  .panel h1{font-size:15px;margin:0 0 6px}
+  .panel .note{color:#777;font-size:11px;margin-top:8px;line-height:1.5}
+  .row{display:flex;align-items:center;gap:6px;margin:3px 0;cursor:pointer;user-select:none}
+  .dot{width:12px;height:12px;border-radius:50%;display:inline-block;border:1.5px solid rgba(0,0,0,.35);flex:0 0 auto}
+  .cnt{color:#999;margin-left:auto}
+  .popup-title{font-weight:600;margin-bottom:4px;line-height:1.4}
+  .popup-meta{color:#555;font-size:12px;line-height:1.6}
+  .popup-meta a{color:#1a6fd4}
+  label.src{margin-right:10px;white-space:nowrap}
+  .leaflet-popup-content{margin:10px 14px;max-width:240px}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="panel">
+  <h1>湾区租房地图</h1>
+  <div id="bands"></div>
+  <div style="margin-top:8px;border-top:1px solid #eee;padding-top:8px">
+    <label class="src"><input type="checkbox" id="src-bay123" checked> bay123</label>
+    <label class="src"><input type="checkbox" id="src-cis" checked> chineseinsfbay</label>
+  </div>
+  <div style="margin-top:8px;border-top:1px solid #eee;padding-top:8px">
+    发帖时间
+    <select id="days" style="font-size:12px;margin-left:4px">
+      <option value="0">全部</option>
+      <option value="7">最近 7 天</option>
+      <option value="14">最近 14 天</option>
+      <option value="30">最近 30 天</option>
+    </select>
+  </div>
+  <div class="note">共 <b id="total"></b> 条房源。位置按帖子中的邮编/城市定位（近似位置，同区房源已散开），点击圆点看详情和原帖链接。<br>数据更新于：<b id="updated">加载中…</b></div>
+</div>
+<script>
+const map = L.map('map').setView([37.55, -122.1], 10);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 18, attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+
+const BANDS = [
+  {key:'b1', label:'$1000 以下',   color:'#2e9e4f', test:v=>v!==null&&v!==undefined&&v<1000},
+  {key:'b2', label:'$1000–1500', color:'#2b7de0', test:v=>v>=1000&&v<1500},
+  {key:'b3', label:'$1500–2500', color:'#f29c11', test:v=>v>=1500&&v<2500},
+  {key:'b4', label:'$2500 以上',  color:'#d93636', test:v=>v>=2500},
+  {key:'b0', label:'未标价',       color:'#8a8f98', test:v=>v===null||v===undefined},
+];
+function bandOf(v){ return BANDS.find(b=>b.test(v)) || BANDS[4]; }
+
+const state = {bands:new Set(BANDS.map(b=>b.key)), srcs:new Set(['bay123','cis']), days:0};
+let markers = [];
+
+// 发帖日期是 ISO 字符串（YYYY-MM-DD），直接按字符串比大小即可
+function cutoffISO(days){
+  const t = new Date(Date.now() - days*86400000);
+  return t.toISOString().slice(0,10);
+}
+function fresh(m){
+  if (!state.days) return true;
+  return m._date && m._date >= cutoffISO(state.days);
+}
+
+function refresh(){
+  let shown = 0;
+  for (const m of markers){
+    const on = state.bands.has(m._band) && state.srcs.has(m._src) && fresh(m);
+    if (on && !map.hasLayer(m)) m.addTo(map);
+    if (!on && map.hasLayer(m)) map.removeLayer(m);
+    if (on) shown++;
+  }
+  document.getElementById('total').textContent = shown;
+  for (const b of BANDS){
+    const n = markers.filter(m=>m._band===b.key && state.srcs.has(m._src) && fresh(m)).length;
+    const el = document.getElementById('cnt-'+b.key);
+    if (el) el.textContent = n;
+  }
+}
+
+const bandsDiv = document.getElementById('bands');
+for (const b of BANDS){
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.innerHTML = '<input type="checkbox" checked id="cb-'+b.key+'">'+
+    '<span class="dot" style="background:'+b.color+'"></span>'+b.label+
+    '<span class="cnt" id="cnt-'+b.key+'"></span>';
+  row.querySelector('input').addEventListener('change', e=>{
+    e.target.checked ? state.bands.add(b.key) : state.bands.delete(b.key); refresh();
+  });
+  bandsDiv.appendChild(row);
+}
+for (const s of ['bay123','cis']){
+  document.getElementById('src-'+s).addEventListener('change', e=>{
+    e.target.checked ? state.srcs.add(s) : state.srcs.delete(s); refresh();
+  });
+}
+document.getElementById('days').addEventListener('change', e=>{
+  state.days = parseInt(e.target.value, 10) || 0; refresh();
+});
+
+fetch('data.json?t=' + Date.now())
+  .then(r => r.json())
+  .then(data => {
+    document.getElementById('updated').textContent = data.updated || '未知';
+    for (const p of data.points) {
+      const b = bandOf(p.pv);
+      const m = L.circleMarker([p.lat, p.lng], {
+        radius:6, color:'rgba(0,0,0,.45)', weight:1, fillColor:b.color, fillOpacity:.85
+      });
+      const srcLabel = p.s === 'cis' ? 'chineseinsfbay' : p.s;
+      m.bindPopup(
+        '<div class="popup-title">'+String(p.t).replace(/</g,'&lt;')+'</div>'+
+        '<div class="popup-meta">'+
+        '租金：'+(p.p || '未标价')+'<br>'+
+        '位置：'+(p.c||'')+(p.z? (p.c?' · ':'')+p.z : '')+(p.lv==='city'?'（城市级近似）':'（邮编级近似）')+'<br>'+
+        '发布：'+(p.d||'')+' · 来源：'+srcLabel+'<br>'+
+        '<a href="'+p.u+'" target="_blank" rel="noopener">查看原帖 →</a></div>'
+      );
+      m._band = b.key; m._src = p.s; m._date = p.d || '';
+      markers.push(m);
+    }
+    refresh();
+  })
+  .catch(e => { document.getElementById('updated').textContent = '数据加载失败'; });
+</script>
+</body>
+</html>
