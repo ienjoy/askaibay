@@ -4,6 +4,23 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>湾区租房地图</title>
+<!-- Google Analytics 4：把 G-XXXXXXXXXX 换成自己的 Measurement ID 即可启用 -->
+<script>
+  window.GA_ID = 'G-XXXXXXXXXX';
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  // 没填 ID、或者在本地 localhost 打开时，不加载也不上报
+  window.TRACK_ON = /^G-[A-Z0-9]{6,}$/.test(GA_ID) && location.hostname !== 'localhost';
+  if (TRACK_ON){
+    const g = document.createElement('script');
+    g.async = true; g.src = 'https://www.googletagmanager.com/gtag/js?id=' + GA_ID;
+    document.head.appendChild(g);
+    gtag('js', new Date());
+    gtag('config', GA_ID);
+  }
+  // 统一的埋点入口：没开统计时静默丢弃
+  function track(name, params){ if (window.TRACK_ON) gtag('event', name, params || {}); }
+</script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <style>
@@ -20,6 +37,12 @@
   .popup-meta{color:#555;font-size:12px;line-height:1.6}
   .popup-meta a{color:#1a6fd4}
   label.src{margin-right:10px;white-space:nowrap}
+  #poll{margin-top:8px;border-top:1px solid #eee;padding-top:8px;color:#888;font-size:11px}
+  #poll .opts{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px}
+  #poll button{font:inherit;font-size:11px;color:#555;background:#f4f5f7;border:1px solid #e2e4e8;
+    border-radius:11px;padding:3px 9px;cursor:pointer}
+  #poll button:hover{background:#e8eaee;color:#222}
+  #poll.done{color:#aaa}
   .leaflet-popup-content{margin:10px 14px;max-width:240px}
 </style>
 </head>
@@ -40,6 +63,15 @@
       <option value="14">最近 14 天</option>
       <option value="30">最近 30 天</option>
     </select>
+  </div>
+  <div id="poll">
+    你是？<span style="color:#bbb">（点一下就好，帮我知道谁在用）</span>
+    <div class="opts">
+      <button data-role="找房">找房</button>
+      <button data-role="出租">出租</button>
+      <button data-role="中介">中介</button>
+      <button data-role="随便看看">随便看看</button>
+    </div>
   </div>
   <div class="note">共 <b id="total"></b> 条房源。位置按帖子中的邮编/城市定位（近似位置，同区房源已散开），点击圆点看详情和原帖链接。<br>数据更新于：<b id="updated">加载中…</b></div>
 </div>
@@ -96,17 +128,49 @@ for (const b of BANDS){
     '<span class="cnt" id="cnt-'+b.key+'"></span>';
   row.querySelector('input').addEventListener('change', e=>{
     e.target.checked ? state.bands.add(b.key) : state.bands.delete(b.key); refresh();
+    track('filter_price', {band: b.label, checked: e.target.checked});
   });
   bandsDiv.appendChild(row);
 }
 for (const s of ['bay123','cis']){
   document.getElementById('src-'+s).addEventListener('change', e=>{
     e.target.checked ? state.srcs.add(s) : state.srcs.delete(s); refresh();
+    track('filter_source', {source: s, checked: e.target.checked});
   });
 }
 document.getElementById('days').addEventListener('change', e=>{
   state.days = parseInt(e.target.value, 10) || 0; refresh();
+  track('filter_days', {days: state.days || 'all'});
 });
+
+// 点"查看原帖"是最强的意图信号：说明这个人真的在联系房东
+document.addEventListener('click', e=>{
+  const a = e.target.closest && e.target.closest('a.orig');
+  if (a) track('click_original', {
+    city: a.dataset.city || '未知',
+    price: parseInt(a.dataset.price, 10) || 0,
+    source: a.dataset.source || ''
+  });
+});
+
+// 身份小调查：答过一次就不再出现（存在本机浏览器里，不会上传任何个人信息）
+(function(){
+  const box = document.getElementById('poll');
+  let answered = null;
+  try { answered = localStorage.getItem('role'); } catch(e) {}
+  if (answered){ box.remove(); return; }
+  box.querySelector('.opts').addEventListener('click', e=>{
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    const role = btn.dataset.role;
+    try { localStorage.setItem('role', role); } catch(e) {}
+    track('survey_role', {role: role});
+    if (window.TRACK_ON) gtag('set', 'user_properties', {visitor_role: role});
+    box.className = 'done';
+    box.textContent = '谢谢！';
+    setTimeout(()=>box.remove(), 1600);
+  });
+})();
 
 fetch('data.json?t=' + Date.now())
   .then(r => r.json())
@@ -124,9 +188,14 @@ fetch('data.json?t=' + Date.now())
         '租金：'+(p.p || '未标价')+'<br>'+
         '位置：'+(p.c||'')+(p.z? (p.c?' · ':'')+p.z : '')+(p.lv==='city'?'（城市级近似）':'（邮编级近似）')+'<br>'+
         '发布：'+(p.d||'')+' · 来源：'+srcLabel+'<br>'+
-        '<a href="'+p.u+'" target="_blank" rel="noopener">查看原帖 →</a></div>'
+        '<a href="'+p.u+'" target="_blank" rel="noopener" class="orig"'+
+        ' data-city="'+(p.c||'')+'" data-price="'+(p.pv||0)+'" data-source="'+p.s+'">查看原帖 →</a></div>'
       );
       m._band = b.key; m._src = p.s; m._date = p.d || '';
+      m.on('popupopen', () => track('open_listing', {
+        city: p.c || '未知', zip: p.z || '', price_band: b.label,
+        price: p.pv || 0, source: p.s
+      }));
       markers.push(m);
     }
     refresh();

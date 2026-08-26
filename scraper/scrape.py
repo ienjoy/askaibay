@@ -32,6 +32,8 @@ HEADERS = {
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_PATH = os.path.join(ROOT, "docs", "data.json")
+# 每次运行的健康状况，给 CI 用来判断要不要报警
+RUN_PATH = os.path.join(ROOT, "state", "last_run.json")
 # 已抓过但没上地图的帖子（重复发帖 / 太旧 / 定位不出来），记下来避免每天重抓详情
 SEEN_PATH = os.path.join(ROOT, "state", "seen.json")
 
@@ -111,6 +113,15 @@ def http_get(url):
     r.raise_for_status()
     r.encoding = r.apparent_encoding or "utf-8"
     return r.text
+
+
+def diagnose_empty(src, url, html):
+    """列表页返回 200 却一条帖子都没解析出来时，把线索打出来。
+    最常见的两种原因：论坛改版（选择器失效）、或者对方按 IP 挡了机房流量。"""
+    text = re.sub(r"<[^>]+>", " ", html)
+    text = re.sub(r"\s+", " ", text).strip()
+    print(f"[{src}] 列表页解析不出帖子: {url}", file=sys.stderr)
+    print(f"[{src}]   响应长度 {len(html)} 字符，正文开头: {text[:200]!r}", file=sys.stderr)
 
 
 def extract_city(hay):
@@ -201,11 +212,15 @@ def bay123_list_ids():
             print(f"[bay123] list page {p} failed: {e}", file=sys.stderr)
             continue
         # 只取 normalthread_*，跳过 stickthread_*（置顶广告/公告常年不动）
+        found = 0
         for m in re.finditer(r'id="normalthread_(\d+)"', html):
             tid = m.group(1)
+            found += 1
             if tid not in seen:
                 seen.add(tid)
                 ids.append(tid)
+        if not found:
+            diagnose_empty("bay123", f"http://www.bay123.com/forum-40-{p}.html", html)
         time.sleep(DELAY)
     return ids
 
@@ -240,7 +255,10 @@ def cis_list_ids():
             print(f"[cis] list page {p} failed: {e}", file=sys.stderr)
             continue
         soup = BeautifulSoup(html, "html.parser")
-        for row in soup.select(".topic_list_detail"):
+        rows = soup.select(".topic_list_detail")
+        if not rows:
+            diagnose_empty("cis", url, html)
+        for row in rows:
             if row.select_one(".topic_list_11 span.sticky"):
                 continue          # 置顶广告
             a = row.select_one(".topic_list_12 a[href*=page_viewtopic]")
@@ -301,13 +319,19 @@ def main():
     new_fetched, reused, failed = 0, 0, 0
     skipped_old, skipped_noloc, skipped_known, skipped_rented = 0, 0, 0, 0
 
+    down_sources = set()      # 这次没抓到任何东西的论坛
+    listed = {}
     for src, list_fn, detail_fn in sources:
         try:
             ids = list_fn()
         except Exception as e:
             print(f"[{src}] listing failed entirely: {e}", file=sys.stderr)
+            down_sources.add(src)
             continue
         print(f"[{src}] {len(ids)} threads on list pages")
+        listed[src] = len(ids)
+        if not ids:
+            down_sources.add(src)
         for tid in ids:
             uid = f"{src}:{tid}"
             if uid in existing:
@@ -351,10 +375,13 @@ def main():
                 "seen": str(today),
             }
 
-    # 淘汰长期没出现的旧房源
+    # 淘汰长期没出现的旧房源。
+    # 注意：某个论坛这次整个抓挂了（被挡/改版）时，它的房源一条都不会"出现在列表页"，
+    # 照常淘汰的话会在 RETENTION_DAYS 天内把这个来源的房源悄悄删光，所以直接跳过。
     cutoff = today - timedelta(days=RETENTION_DAYS)
     points = [p for p in existing.values()
-              if datetime.fromisoformat(p.get("seen", "2000-01-01")).date() >= cutoff]
+              if p.get("s") in down_sources
+              or datetime.fromisoformat(p.get("seen", "2000-01-01")).date() >= cutoff]
     candidates = points
     points = dedup(candidates)
     kept_ids = {p["id"] for p in points}
@@ -374,6 +401,14 @@ def main():
     os.makedirs(os.path.dirname(SEEN_PATH), exist_ok=True)
     json.dump(seen_ledger, open(SEEN_PATH, "w", encoding="utf-8"),
               ensure_ascii=False, sort_keys=True)
+    json.dump({"updated": out["updated"], "points": len(points),
+               "listed": listed, "down": sorted(down_sources)},
+              open(RUN_PATH, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    for src in sorted(down_sources):
+        msg = f"{src} 这次一条帖子都没抓到（可能被挡了 IP 或论坛改版），该来源的房源已保护、不淘汰"
+        print(f"::warning::{msg}")
+        print(f"[{src}] {msg}", file=sys.stderr)
+
     print(f"done: {len(points)} points on map | "
           f"fetched {new_fetched} new, reused {reused}, failed {failed}, "
           f"skipped {skipped_known} already-known | "

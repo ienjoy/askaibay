@@ -30,10 +30,20 @@ jobs:
         run: |
           git config user.name "rental-map-bot"
           git config user.email "actions@users.noreply.github.com"
-          git add docs/data.json state/seen.json
+          git add docs/data.json state/seen.json state/last_run.json
           if git diff --cached --quiet; then
             echo "没有新数据，跳过提交"
           else
             git commit -m "自动更新房源数据 $(date -u +'%Y-%m-%d %H:%M UTC')"
             git push
           fi
+
+      # 放在提交之后：就算某个论坛抓挂了，当天抓到的好数据也已经存下来了
+      - name: 检查数据源健康状况
+        run: |
+          down=$(python -c "import json;print(','.join(json.load(open('state/last_run.json'))['down']))")
+          if [ -n "$down" ]; then
+            echo "::error::以下论坛这次一条都没抓到：$down（房源已保护不淘汰，但需要检查是被挡 IP 还是论坛改版）"
+            exit 1
+          fi
+          echo "所有数据源正常"
