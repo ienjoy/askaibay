@@ -1,9 +1,12 @@
 {
- "updated": "2026-08-26 23:51 UTC",
- "points": 457,
+ "updated": "2026-08-27 00:08 UTC",
+ "points": 456,
  "listed": {
-  "bay123": 240,
-  "cis": 180
+  "bay123": 0,
+  "cis": 0
  },
- "down": []
+ "down": [
+  "bay123",
+  "cis"
+ ]
 }
