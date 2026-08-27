@@ -1,0 +1,72 @@
+name: 诊断 chineseinsfbay 抓取
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests
+      - name: 探测
+        run: |
+          python - <<'EOF'
+          import requests, textwrap
+
+          URL = "https://www.chineseinsfbay.com/f/page_viewforum/f_5.html"
+          BOT = "Mozilla/5.0 (compatible; rental-map-bot; personal noncommercial use)"
+          CHROME = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36")
+          FULL = {
+              "User-Agent": CHROME,
+              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+              "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+              "Accept-Encoding": "gzip, deflate, br",
+              "Connection": "keep-alive",
+              "Upgrade-Insecure-Requests": "1",
+              "Sec-Fetch-Dest": "document",
+              "Sec-Fetch-Mode": "navigate",
+              "Sec-Fetch-Site": "none",
+              "Sec-Fetch-User": "?1",
+          }
+
+          def show(name, r):
+              body = r.content
+              hdrs = {k: v for k, v in r.headers.items()
+                      if k.lower() in ("server","content-length","content-type","cf-ray",
+                                       "x-powered-by","set-cookie","x-cache","via","x-sucuri-id")}
+              print(f"--- {name}")
+              print(f"    状态 {r.status_code} | body {len(body)} 字节 | 耗时 {r.elapsed.total_seconds():.2f}s")
+              print(f"    响应头 {hdrs}")
+              if body:
+                  print(f"    开头 {body[:150]!r}")
+                  print(f"    含帖子行: {body.count(b'topic_list_detail')}")
+
+          tests = []
+          tests.append(("1 机器人UA(现状)", lambda: requests.get(URL, headers={"User-Agent": BOT}, timeout=25)))
+          tests.append(("2 只换Chrome UA", lambda: requests.get(URL, headers={"User-Agent": CHROME}, timeout=25)))
+          tests.append(("3 完整浏览器头", lambda: requests.get(URL, headers=FULL, timeout=25)))
+
+          def with_session():
+              s = requests.Session(); s.headers.update(FULL)
+              s.get("https://www.chineseinsfbay.com/", timeout=25)   # 先访问首页拿 cookie
+              return s.get(URL, timeout=25)
+          tests.append(("4 先访首页拿cookie", with_session))
+
+          tests.append(("5 带Referer", lambda: requests.get(
+              URL, headers={**FULL, "Referer": "https://www.chineseinsfbay.com/"}, timeout=25)))
+          tests.append(("6 http 而非 https", lambda: requests.get(
+              URL.replace("https://", "http://"), headers=FULL, timeout=25)))
+          tests.append(("7 首页本身", lambda: requests.get(
+              "https://www.chineseinsfbay.com/", headers=FULL, timeout=25)))
+
+          for name, fn in tests:
+              try:
+                  show(name, fn())
+              except Exception as e:
+                  print(f"--- {name}\n    异常: {type(e).__name__}: {e}")
+          EOF
