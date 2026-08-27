@@ -10,8 +10,18 @@
   // 房东投稿的 Google 表单地址；留空则页面上不显示投稿入口
   // 房东投稿：表单直接做在本页，提交时发给 Google 表单的接收地址。
   // 这两项由 tools/setup_form.gs 运行后打印出来，填上才会出现投稿按钮。
-  window.FORM_ACTION = '';
-  window.FORM_ENTRIES = {};
+  window.FORM_ACTION = 'https://docs.google.com/forms/d/e/1FAIpQLSeOlYf3EuPfUrq2ztHBV9QZT6TPLEN-bziNkvLjxemIE8M3uA/formResponse';
+  window.FORM_ENTRIES = {
+    title:   'entry.1997254416',
+    price:   'entry.1662377209',
+    city:    'entry.558954830',
+    zip:     'entry.2113815971',
+    kind:    'entry.752520753',
+    contact: 'entry.1817878607',
+    note:    'entry.1900981333',
+    link:    'entry.870211380',
+    agree:   'entry.881140633'
+  };
   window.dataLayer = window.dataLayer || [];
   function gtag(){dataLayer.push(arguments);}
   // 没填 ID、或者在本地 localhost 打开时，不加载也不上报
