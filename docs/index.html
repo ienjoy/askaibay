@@ -25,6 +25,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <style>
   html,body{margin:0;height:100%;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+  /* iOS Safari 的地址栏会伸缩，用 dvh 才能真正占满可见区域 */
+  @supports (height: 100dvh){ html,body{height:100dvh} }
   #map{position:absolute;top:0;bottom:0;left:0;right:0}
   .panel{position:absolute;top:10px;right:10px;z-index:1000;background:#fff;border-radius:10px;
     box-shadow:0 2px 10px rgba(0,0,0,.25);padding:12px 14px;font-size:13px;max-width:240px}
@@ -44,11 +46,58 @@
   #poll button:hover{background:#e8eaee;color:#222}
   #poll.done{color:#aaa}
   .leaflet-popup-content{margin:10px 14px;max-width:240px}
+
+  /* 抽屉的关闭按钮，只在窄屏出现 */
+  #close{display:none;position:absolute;top:10px;right:12px;
+    width:34px;height:34px;border:0;background:transparent;
+    font-size:26px;line-height:1;color:#999;cursor:pointer;-webkit-tap-highlight-color:transparent}
+
+  /* 唤出筛选的悬浮按钮，只在窄屏出现 */
+  #fab{display:none;position:fixed;left:50%;transform:translateX(-50%);
+    bottom:calc(14px + env(safe-area-inset-bottom));z-index:1200;
+    background:#fff;border:1px solid #dcdfe4;border-radius:22px;
+    box-shadow:0 3px 14px rgba(0,0,0,.28);padding:10px 18px;
+    font:inherit;font-size:14px;color:#222;cursor:pointer;-webkit-tap-highlight-color:transparent}
+  #fab b{color:#1a6fd4}
+
+  /* ---- 窄屏（手机）---- */
+  @media (max-width: 700px){
+    #fab{display:block}
+    .panel{
+      top:auto;left:0;right:0;bottom:0;max-width:none;
+      border-radius:16px 16px 0 0;padding:14px 18px calc(16px + env(safe-area-inset-bottom));
+      box-shadow:0 -3px 18px rgba(0,0,0,.3);font-size:15px;
+      max-height:72vh;overflow-y:auto;-webkit-overflow-scrolling:touch;
+      transform:translateY(102%);transition:transform .22s ease;
+    }
+    .panel.open{transform:translateY(0)}
+    .panel h1{font-size:17px;margin-bottom:10px;padding-right:34px}
+    #close{display:block}
+    /* 手指点得到：加大行高和勾选框 */
+    .row{margin:0;padding:9px 0;gap:9px}
+    .row input[type=checkbox]{width:19px;height:19px}
+    .dot{width:15px;height:15px}
+    label.src{display:inline-flex;align-items:center;gap:6px;margin:6px 14px 6px 0}
+    label.src input{width:19px;height:19px}
+    #days{font-size:15px;padding:5px 8px}
+    #poll button{font-size:13px;padding:7px 13px}
+    #poll .opts{gap:7px}
+    .panel .note{font-size:12px}
+    .cnt{font-size:14px;color:#8a8f98}
+    /* 弹窗在小屏上给足宽度，"查看原帖"要好点 */
+    .leaflet-popup-content{margin:12px 14px;max-width:min(74vw,300px);font-size:14px}
+    .popup-meta{font-size:13px}
+    .popup-meta a{display:inline-block;padding:6px 0;font-size:14px}
+    .leaflet-control-zoom{display:none}   /* 手机双指缩放即可，省地方 */
+  }
+
 </style>
 </head>
 <body>
 <div id="map"></div>
-<div class="panel">
+<button id="fab">筛选 · <b id="fab-count">…</b> 条房源</button>
+<div class="panel" id="panel">
+  <button id="close" aria-label="关闭">&times;</button>
   <h1>湾区租房地图</h1>
   <div id="bands"></div>
   <div style="margin-top:8px;border-top:1px solid #eee;padding-top:8px">
@@ -91,6 +140,7 @@ const BANDS = [
 function bandOf(v){ return BANDS.find(b=>b.test(v)) || BANDS[4]; }
 
 const state = {bands:new Set(BANDS.map(b=>b.key)), srcs:new Set(['bay123','cis']), days:0};
+const DOT_R = window.matchMedia('(max-width: 700px)').matches ? 8 : 6;
 let markers = [];
 
 // 发帖日期是 ISO 字符串（YYYY-MM-DD），直接按字符串比大小即可
@@ -112,6 +162,7 @@ function refresh(){
     if (on) shown++;
   }
   document.getElementById('total').textContent = shown;
+  document.getElementById('fab-count').textContent = shown;
   for (const b of BANDS){
     const n = markers.filter(m=>m._band===b.key && state.srcs.has(m._src) && fresh(m)).length;
     const el = document.getElementById('cnt-'+b.key);
@@ -172,6 +223,27 @@ document.addEventListener('click', e=>{
   });
 })();
 
+// 手机上把筛选面板收成底部抽屉：点悬浮按钮拉起，点关闭/点地图收回
+(function(){
+  const panel = document.getElementById('panel');
+  const fab = document.getElementById('fab');
+  const isPhone = () => window.matchMedia('(max-width: 700px)').matches;
+
+  function open(){ panel.classList.add('open'); fab.style.display = 'none'; }
+  function close(){ panel.classList.remove('open'); if (isPhone()) fab.style.display = 'block'; }
+
+  fab.addEventListener('click', open);
+  document.getElementById('close').addEventListener('click', close);
+  // 点地图任意处收起抽屉，手指不用去够那个小叉
+  map.on('click', close);
+  map.on('movestart', close);
+  // 转屏或从手机切到桌面尺寸时，恢复成该尺寸的正常状态
+  window.addEventListener('resize', () => {
+    if (!isPhone()){ panel.classList.remove('open'); fab.style.display = 'none'; }
+    else if (!panel.classList.contains('open')) fab.style.display = 'block';
+  });
+})();
+
 fetch('data.json?t=' + Date.now())
   .then(r => r.json())
   .then(data => {
@@ -179,7 +251,8 @@ fetch('data.json?t=' + Date.now())
     for (const p of data.points) {
       const b = bandOf(p.pv);
       const m = L.circleMarker([p.lat, p.lng], {
-        radius:6, color:'rgba(0,0,0,.45)', weight:1, fillColor:b.color, fillOpacity:.85
+        // 手机上圆点大一点，手指才点得准
+        radius: DOT_R, color:'rgba(0,0,0,.45)', weight:1, fillColor:b.color, fillOpacity:.85
       });
       const srcLabel = p.s === 'cis' ? 'chineseinsfbay' : p.s;
       m.bindPopup(
