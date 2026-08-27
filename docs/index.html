@@ -137,7 +137,7 @@
   </div>
   <div id="submit-box" style="display:none">
     <a id="submit-link" href="#" target="_blank" rel="noopener">我有房子出租 →</a>
-    <div class="hint">免费发布，审核后显示在地图上</div>
+    <div class="hint">免费发布，审核后显示在地图上。<br>你填写的联系方式会公开显示，请自行斟酌。</div>
   </div>
   <div class="note">共 <b id="total"></b> 条房源。位置按帖子中的邮编/城市定位（近似位置，同区房源已散开），点击圆点看详情和原帖链接。<br>数据更新于：<b id="updated">加载中…</b></div>
 </div>
@@ -298,7 +298,8 @@ fetch('data.json?t=' + Date.now())
         (p.lv==='city'?'（城市级近似）':'（邮编级近似）')+'<br>';
       if (owner && p.n) html += esc(p.n)+'<br>';
       html += (owner ? '发布' : '发布')+'：'+esc(p.d||'')+' · 来源：'+esc(srcLabel)+'<br>';
-      if (owner && p.ct) html += '联系：<span class="popup-contact">'+esc(p.ct)+'</span><br>';
+      if (owner && p.ct) html += '联系：<span class="popup-contact">'+esc(p.ct)+'</span><br>'+
+        '<span style="color:#999;font-size:11px">房东自行提交，本站未核实，请当面看房、勿提前付款</span><br>';
       if (p.u) html += '<a href="'+esc(p.u)+'" target="_blank" rel="noopener" class="orig"'+
         ' data-city="'+esc(p.c||'')+'" data-price="'+(p.pv||0)+'" data-source="'+esc(p.s)+'">'+
         (owner ? '查看详情 →' : '查看原帖 →')+'</a>';
