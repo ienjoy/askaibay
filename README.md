@@ -7,6 +7,7 @@
 ## 仓库结构
 
 ```
+├── update.sh                    # 手动更新：抓取 → 更新数据 → 推送（平时用这个）
 ├── scraper/scrape.py            # 抓取脚本：抓两个论坛 → 定位 → 合并进 docs/data.json
 ├── scraper/reparse.py           # 一次性工具：提取规则变好后回填老点位（平时不用跑）
 ├── docs/index.html              # 地图页面（GitHub Pages 发布这个目录）
@@ -73,13 +74,28 @@
 
 更新频率改 `.github/workflows/update.yml` 里的 cron 表达式（UTC 时间）。
 
-## 本地测试
+## 手动更新数据
 
 ```bash
-pip install -r requirements.txt
-python scraper/scrape.py        # 更新 docs/data.json
+./update.sh
+```
+
+会依次同步远端、抓取两个论坛、提交并推送，一两分钟后 https://askaibay.com 生效。
+首次运行会自动建好 Python 环境。想起来就跑一次，不跑也没关系——已有房源不会因为
+没更新而消失。
+
+**为什么需要手动跑**：chineseinsfbay 用 Cloudflare 挡掉了 GitHub Actions 所在的
+机房 IP（返回 200 但 body 为空，换 UA、加 header、带 cookie 全都没用），只有住宅
+网络能正常访问。云端的每日任务照常跑，负责 bay123；cis 的新帖要靠本机跑 `update.sh`
+才能进来。某个论坛整个抓挂时，脚本不会淘汰它的房源，所以数据不会被悄悄删光。
+
+## 本地预览
+
+```bash
 python -m http.server -d docs   # 打开 http://localhost:8000 看地图
 ```
+
+在 localhost 打开时不会向 Google Analytics 上报，方便自己测试。
 
 ## 已知限制
 
