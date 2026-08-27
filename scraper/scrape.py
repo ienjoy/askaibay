@@ -6,6 +6,8 @@
 
 在 GitHub Actions 中每日运行；也可本地运行：python scraper/scrape.py
 """
+import csv
+import io
 import json
 import os
 import re
@@ -36,6 +38,11 @@ DATA_PATH = os.path.join(ROOT, "docs", "data.json")
 RUN_PATH = os.path.join(ROOT, "state", "last_run.json")
 # 已抓过但没上地图的帖子（重复发帖 / 太旧 / 定位不出来），记下来避免每天重抓详情
 SEEN_PATH = os.path.join(ROOT, "state", "seen.json")
+
+# 房东直接投稿：Google 表单的回复表格「发布到网络」后的 CSV 地址。
+# 留空则跳过这一步。设置方法见 README「房东投稿」一节。
+SUBMISSIONS_CSV = ""
+SUBMISSION_DAYS = 60      # 投稿超过这么久自动下架，免得留下过期房源
 
 # ---------------- 地理定位表（近似坐标） ----------------
 CITY = {
@@ -89,9 +96,14 @@ def norm_date(raw):
     if not raw:
         return ""
     m = re.search(r"(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})", raw)
-    if not m:
-        return ""
-    y, mo, dd = (int(x) for x in m.groups())
+    if m:
+        y, mo, dd = (int(x) for x in m.groups())
+    else:
+        # Google 表格在美区导出的时间戳是 8/25/2026 这种月/日/年
+        m = re.search(r"(?<!\d)(\d{1,2})[-/.](\d{1,2})[-/.](20\d{2})", raw)
+        if not m:
+            return ""
+        mo, dd, y = (int(x) for x in m.groups())
     try:
         return datetime(y, mo, dd).date().isoformat()
     except ValueError:
@@ -175,14 +187,17 @@ def dedup_key(p):
 
 
 def dedup(points):
-    """同一内容被反复发帖时只保留最新的一条。"""
-    best = {}
+    """同一内容被反复发帖时只保留最新的一条。房东投稿不参与去重。"""
+    best, keep = {}, []
     for p in points:
+        if p.get("s") == "owner":
+            keep.append(p)
+            continue
         k = dedup_key(p)
         cur = best.get(k)
         if cur is None or (p.get("d") or "", p["id"]) > (cur.get("d") or "", cur["id"]):
             best[k] = p
-    return list(best.values())
+    return list(best.values()) + keep
 
 
 def jitter(uid, scale):
@@ -289,6 +304,106 @@ def cis_detail(tid):
     return {"t": title[:60], "p": price, "pv": pv, "z": zc, "c": city, "d": pub, "u": url}
 
 
+# ---------------- 房东投稿（Google 表单）----------------
+# 表格列名不要求一字不差，按关键词认列，方便你以后改问题措辞。
+FIELD_KEYS = {
+    "title":   ("标题", "房源", "title"),
+    "price":   ("租金", "价格", "月租", "rent", "price"),
+    "city":    ("城市", "地区", "city"),
+    "zip":     ("邮编", "zip"),
+    "contact": ("联系", "微信", "电话", "邮箱", "contact"),
+    "note":    ("说明", "描述", "详情", "介绍", "note"),
+    "kind":    ("类型", "出租方式", "type"),
+    "link":    ("链接", "原帖", "link", "url"),
+    "ok":      ("审核", "上线", "approved", "状态"),
+}
+APPROVED = ("是", "y", "yes", "通过", "ok", "true", "1", "√", "✓")
+
+
+def match_columns(header):
+    """把表格的列名映射到我们要的字段。同一字段匹配到多列时取最靠前的。"""
+    idx = {}
+    for i, col in enumerate(header):
+        low = (col or "").strip().lower()
+        for key, words in FIELD_KEYS.items():
+            if key in idx:
+                continue
+            if any(w.lower() in low for w in words):
+                idx[key] = i
+    return idx
+
+
+def fetch_submissions(today):
+    """读取房东投稿表格，返回可以上地图的点位。"""
+    if not SUBMISSIONS_CSV:
+        return [], 0, 0
+    try:
+        text = http_get(SUBMISSIONS_CSV)
+    except Exception as e:
+        print(f"[投稿] 读取表格失败: {e}", file=sys.stderr)
+        return [], 0, 0
+
+    rows = list(csv.reader(io.StringIO(text)))
+    if len(rows) < 2:
+        return [], 0, 0
+    idx = match_columns(rows[0])
+    missing = [k for k in ("title", "ok") if k not in idx]
+    if missing:
+        print(f"[投稿] 表格里找不到这些列: {missing}，跳过。表头是 {rows[0]}", file=sys.stderr)
+        return [], 0, 0
+
+    def cell(row, key):
+        i = idx.get(key)
+        return (row[i].strip() if i is not None and i < len(row) else "")
+
+    points, pending, expired = [], 0, 0
+    for row in rows[1:]:
+        if not any(c.strip() for c in row):
+            continue
+        if cell(row, "ok").lower() not in APPROVED:
+            pending += 1
+            continue        # 你还没审核通过的，不上地图
+
+        stamp = row[0].strip() if row else ""      # 表单第一列是提交时间
+        submitted = norm_date(stamp)
+        if submitted and (today - datetime.fromisoformat(submitted).date()).days > SUBMISSION_DAYS:
+            expired += 1
+            continue
+
+        title = cell(row, "title")
+        if not title:
+            continue
+        blob = " ".join(cell(row, k) for k in ("title", "note", "city", "zip", "price", "kind"))
+        raw_price = cell(row, "price")
+        # 表单里「租金」那一栏常常就填个纯数字，这种直接采信
+        bare = re.fullmatch(r"\$?\s*(\d{1,2},\d{3}|\d{3,4})(?:\s*(?:/|每)?\s*(?:月|month|mo))?", raw_price)
+        if bare and PRICE_MIN <= int(bare.group(1).replace(",", "")) <= PRICE_MAX:
+            pv = int(bare.group(1).replace(",", ""))
+            price = f"${pv}"
+        else:
+            price, pv = extract_price(raw_price or blob)
+        zc = cell(row, "zip")
+        if not re.fullmatch(r"9[45]\d{3}", zc):
+            m = re.search(r"\b9[45]\d{3}\b", blob)
+            zc = m.group(0) if m else ""
+        city = cell(row, "city") if cell(row, "city") in CITY else extract_city(blob)
+
+        uid = "owner:" + hashlib.md5((stamp + title).encode("utf-8")).hexdigest()[:12]
+        loc = locate(uid, zc, city)
+        if not loc:
+            print(f"[投稿] 定位不出来，跳过: {title[:30]}（城市 {city!r} 邮编 {zc!r}）", file=sys.stderr)
+            continue
+        lat, lng, level = loc
+        points.append({
+            "id": uid, "s": "owner", "t": title[:60], "p": price, "pv": pv,
+            "z": zc, "c": city, "d": submitted, "u": cell(row, "link"),
+            "ct": cell(row, "contact"), "k": cell(row, "kind"),
+            "n": cell(row, "note")[:120],
+            "lat": lat, "lng": lng, "lv": level, "seen": str(today),
+        })
+    return points, pending, expired
+
+
 # ---------------- 主流程 ----------------
 def main():
     today = datetime.now(timezone.utc).date()
@@ -299,6 +414,8 @@ def main():
             old = json.load(open(DATA_PATH, encoding="utf-8"))
             for pt in old.get("points", []):
                 pt["d"] = norm_date(pt.get("d"))
+                if pt.get("s") == "owner":
+                    continue      # 房东投稿每次从表格重建，见 fetch_submissions
                 if too_old(pt["d"], today) or RENTED_RE.search(pt.get("t", "")):
                     continue      # 历史数据里的置顶广告/陈年老帖/已租帖，清理掉
                 existing[pt["id"]] = pt
@@ -375,12 +492,18 @@ def main():
                 "seen": str(today),
             }
 
+    subs, pending, expired = fetch_submissions(today)
+    for pt in subs:
+        existing[pt["id"]] = pt
+    if SUBMISSIONS_CSV:
+        print(f"[投稿] 上地图 {len(subs)} 条，待审核 {pending} 条，超过 {SUBMISSION_DAYS} 天下架 {expired} 条")
+
     # 淘汰长期没出现的旧房源。
     # 注意：某个论坛这次整个抓挂了（被挡/改版）时，它的房源一条都不会"出现在列表页"，
     # 照常淘汰的话会在 RETENTION_DAYS 天内把这个来源的房源悄悄删光，所以直接跳过。
     cutoff = today - timedelta(days=RETENTION_DAYS)
     points = [p for p in existing.values()
-              if p.get("s") in down_sources
+              if p.get("s") in ("owner",) or p.get("s") in down_sources
               or datetime.fromisoformat(p.get("seen", "2000-01-01")).date() >= cutoff]
     candidates = points
     points = dedup(candidates)
@@ -402,6 +525,7 @@ def main():
     json.dump(seen_ledger, open(SEEN_PATH, "w", encoding="utf-8"),
               ensure_ascii=False, sort_keys=True)
     json.dump({"updated": out["updated"], "points": len(points),
+               "submissions": len(subs), "pending": pending,
                "listed": listed, "down": sorted(down_sources)},
               open(RUN_PATH, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     for src in sorted(down_sources):

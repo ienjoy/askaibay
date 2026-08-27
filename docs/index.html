@@ -7,6 +7,8 @@
 <!-- Google Analytics 4（媒体资源 askaibay）。换 ID 改下面一行即可；ID 不合法或在 localhost 打开时自动不上报 -->
 <script>
   window.GA_ID = 'G-N9KT8B9DRX';
+  // 房东投稿的 Google 表单地址；留空则页面上不显示投稿入口
+  window.SUBMIT_URL = '';
   window.dataLayer = window.dataLayer || [];
   function gtag(){dataLayer.push(arguments);}
   // 没填 ID、或者在本地 localhost 打开时，不加载也不上报
@@ -45,6 +47,14 @@
     border-radius:11px;padding:3px 9px;cursor:pointer}
   #poll button:hover{background:#e8eaee;color:#222}
   #poll.done{color:#aaa}
+  #submit-box{margin-top:8px;border-top:1px solid #eee;padding-top:9px}
+  #submit-link{display:block;text-align:center;background:#1a6fd4;color:#fff;
+    text-decoration:none;border-radius:8px;padding:8px 10px;font-size:13px;font-weight:600}
+  #submit-link:hover{background:#155cb0}
+  #submit-box .hint{color:#999;font-size:11px;margin-top:5px;line-height:1.5;text-align:center}
+  .popup-owner{display:inline-block;background:#eaf2fd;color:#1a5fb4;border:1px solid #c7ddf7;
+    border-radius:4px;padding:1px 6px;font-size:11px;margin-bottom:5px}
+  .popup-contact{font-weight:600;color:#222}
   .leaflet-popup-content{margin:10px 14px;max-width:240px}
 
   /* 抽屉的关闭按钮，只在窄屏出现 */
@@ -81,6 +91,7 @@
     label.src input{width:19px;height:19px}
     #days{font-size:15px;padding:5px 8px}
     #poll button{font-size:13px;padding:7px 13px}
+    #submit-link{font-size:15px;padding:11px}
     #poll .opts{gap:7px}
     .panel .note{font-size:12px}
     .cnt{font-size:14px;color:#8a8f98}
@@ -103,6 +114,8 @@
   <div style="margin-top:8px;border-top:1px solid #eee;padding-top:8px">
     <label class="src"><input type="checkbox" id="src-bay123" checked> bay123</label>
     <label class="src"><input type="checkbox" id="src-cis" checked> chineseinsfbay</label>
+    <label class="src" id="src-owner-wrap" style="display:none">
+      <input type="checkbox" id="src-owner" checked> 房东直发</label>
   </div>
   <div style="margin-top:8px;border-top:1px solid #eee;padding-top:8px">
     发帖时间
@@ -122,6 +135,10 @@
       <button data-role="随便看看">随便看看</button>
     </div>
   </div>
+  <div id="submit-box" style="display:none">
+    <a id="submit-link" href="#" target="_blank" rel="noopener">我有房子出租 →</a>
+    <div class="hint">免费发布，审核后显示在地图上</div>
+  </div>
   <div class="note">共 <b id="total"></b> 条房源。位置按帖子中的邮编/城市定位（近似位置，同区房源已散开），点击圆点看详情和原帖链接。<br>数据更新于：<b id="updated">加载中…</b></div>
 </div>
 <script>
@@ -139,9 +156,10 @@ const BANDS = [
 ];
 function bandOf(v){ return BANDS.find(b=>b.test(v)) || BANDS[4]; }
 
-const state = {bands:new Set(BANDS.map(b=>b.key)), srcs:new Set(['bay123','cis']), days:0};
+const state = {bands:new Set(BANDS.map(b=>b.key)), srcs:new Set(['bay123','cis','owner']), days:0};
 const DOT_R = window.matchMedia('(max-width: 700px)').matches ? 8 : 6;
 let markers = [];
+let ownerSeen = false;
 
 // 发帖日期是 ISO 字符串（YYYY-MM-DD），直接按字符串比大小即可
 function cutoffISO(days){
@@ -183,7 +201,7 @@ for (const b of BANDS){
   });
   bandsDiv.appendChild(row);
 }
-for (const s of ['bay123','cis']){
+for (const s of ['bay123','cis','owner']){
   document.getElementById('src-'+s).addEventListener('change', e=>{
     e.target.checked ? state.srcs.add(s) : state.srcs.delete(s); refresh();
     track('filter_source', {source: s, checked: e.target.checked});
@@ -223,6 +241,16 @@ document.addEventListener('click', e=>{
   });
 })();
 
+// 投稿入口：只有配置了表单地址才显示
+(function(){
+  if (!window.SUBMIT_URL) return;
+  const box = document.getElementById('submit-box');
+  const a = document.getElementById('submit-link');
+  a.href = SUBMIT_URL;
+  box.style.display = 'block';
+  a.addEventListener('click', () => track('click_submit'));
+})();
+
 // 手机上把筛选面板收成底部抽屉：点悬浮按钮拉起，点关闭/点地图收回
 (function(){
   const panel = document.getElementById('panel');
@@ -250,20 +278,32 @@ fetch('data.json?t=' + Date.now())
     document.getElementById('updated').textContent = data.updated || '未知';
     for (const p of data.points) {
       const b = bandOf(p.pv);
+      const owner = p.s === 'owner';
       const m = L.circleMarker([p.lat, p.lng], {
-        // 手机上圆点大一点，手指才点得准
-        radius: DOT_R, color:'rgba(0,0,0,.45)', weight:1, fillColor:b.color, fillOpacity:.85
+        // 手机上圆点大一点，手指才点得准；房东直发的用深蓝粗描边区分
+        radius: owner ? DOT_R + 1 : DOT_R,
+        color: owner ? '#1a5fb4' : 'rgba(0,0,0,.45)',
+        weight: owner ? 2.5 : 1,
+        fillColor: b.color, fillOpacity:.85
       });
-      const srcLabel = p.s === 'cis' ? 'chineseinsfbay' : p.s;
-      m.bindPopup(
-        '<div class="popup-title">'+String(p.t).replace(/</g,'&lt;')+'</div>'+
+      if (owner) ownerSeen = true;
+      const srcLabel = p.s === 'cis' ? 'chineseinsfbay' : (owner ? '房东直发' : p.s);
+      const esc = v => String(v == null ? '' : v).replace(/[<>&"]/g,
+        c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
+      let html = (owner ? '<div class="popup-owner">房东直发</div>' : '') +
+        '<div class="popup-title">'+esc(p.t)+'</div>'+
         '<div class="popup-meta">'+
-        '租金：'+(p.p || '未标价')+'<br>'+
-        '位置：'+(p.c||'')+(p.z? (p.c?' · ':'')+p.z : '')+(p.lv==='city'?'（城市级近似）':'（邮编级近似）')+'<br>'+
-        '发布：'+(p.d||'')+' · 来源：'+srcLabel+'<br>'+
-        '<a href="'+p.u+'" target="_blank" rel="noopener" class="orig"'+
-        ' data-city="'+(p.c||'')+'" data-price="'+(p.pv||0)+'" data-source="'+p.s+'">查看原帖 →</a></div>'
-      );
+        '租金：'+esc(p.p || '未标价')+(p.k ? ' · '+esc(p.k) : '')+'<br>'+
+        '位置：'+esc(p.c||'')+(p.z? (p.c?' · ':'')+esc(p.z) : '')+
+        (p.lv==='city'?'（城市级近似）':'（邮编级近似）')+'<br>';
+      if (owner && p.n) html += esc(p.n)+'<br>';
+      html += (owner ? '发布' : '发布')+'：'+esc(p.d||'')+' · 来源：'+esc(srcLabel)+'<br>';
+      if (owner && p.ct) html += '联系：<span class="popup-contact">'+esc(p.ct)+'</span><br>';
+      if (p.u) html += '<a href="'+esc(p.u)+'" target="_blank" rel="noopener" class="orig"'+
+        ' data-city="'+esc(p.c||'')+'" data-price="'+(p.pv||0)+'" data-source="'+esc(p.s)+'">'+
+        (owner ? '查看详情 →' : '查看原帖 →')+'</a>';
+      html += '</div>';
+      m.bindPopup(html);
       m._band = b.key; m._src = p.s; m._date = p.d || '';
       m.on('popupopen', () => track('open_listing', {
         city: p.c || '未知', zip: p.z || '', price_band: b.label,
@@ -271,6 +311,7 @@ fetch('data.json?t=' + Date.now())
       }));
       markers.push(m);
     }
+    if (ownerSeen) document.getElementById('src-owner-wrap').style.display = '';
     refresh();
   })
   .catch(e => { document.getElementById('updated').textContent = '数据加载失败'; });
