@@ -2,7 +2,12 @@
 
 把 [bay123.com 湾区租房版](http://www.bay123.com/forum-40-1.html) 和
 [chineseinsfbay.com 房屋出租版](https://www.chineseinsfbay.com/f/page_viewforum/f_5.html)
-的租房帖子抓取下来，标在交互地图上。GitHub Actions 每天自动抓取新帖并更新地图。
+的租房帖子抓取下来，标在交互地图上。
+
+**网站已上线：https://askaibay.com**
+
+数据来自两条途径：GitHub Actions 每天自动抓 bay123；chineseinsfbay 被 Cloudflare 挡在
+机房 IP 之外，需要你在自己电脑上跑一次 [`./update.sh`](#手动更新数据)（见下文）。
 
 ## 仓库结构
 
@@ -12,36 +17,27 @@
 ├── scraper/reparse.py           # 一次性工具：提取规则变好后回填老点位（平时不用跑）
 ├── docs/index.html              # 地图页面（GitHub Pages 发布这个目录）
 ├── docs/data.json               # 房源数据（脚本自动维护，含 457 条已验证数据）
+├── docs/CNAME                   # 自定义域名 askaibay.com
 ├── state/seen.json              # 抓过但没上地图的帖子清单，避免每天重抓
+├── state/last_run.json          # 每次运行的健康状况，CI 用它判断要不要报警
 ├── .github/workflows/update.yml # 每日定时任务
 └── requirements.txt
 ```
 
-## 部署步骤（一次性，约 5 分钟）
+## 部署现状
 
-1. **创建仓库**：GitHub 上新建一个 **Public** 仓库（Pages 免费版需要 Public），
-   比如叫 `bayarea-rental-map`。
+已经部署好了，这一节只是记录当前配置，平时不用管。
 
-2. **上传代码**：在本地这个文件夹里执行：
-   ```bash
-   git init
-   git add .
-   git commit -m "初始提交"
-   git branch -M main
-   git remote add origin https://github.com/<你的用户名>/bayarea-rental-map.git
-   git push -u origin main
-   ```
-   （或者直接在 GitHub 网页上 "uploading an existing file" 把文件拖上去，
-   注意 `.github` 是隐藏文件夹，网页上传容易漏掉，推荐用命令行。）
+| 项目 | 配置 |
+|---|---|
+| 仓库 | [ienjoy/bayarea-rental-map](https://github.com/ienjoy/bayarea-rental-map)（Public） |
+| 网站 | https://askaibay.com |
+| GitHub Pages | Settings → Pages：`main` 分支 `/docs` 目录 |
+| 域名 | Namecheap，4 条 A 记录指向 GitHub Pages；`www` CNAME 指向主域名 |
+| 定时任务 | 每天 UTC 14:30（加州早上 6:30/7:30）自动跑，只有 bay123 能抓到 |
+| 访问统计 | Google Analytics 4，在 `docs/index.html` 顶部配置 |
 
-3. **开启 GitHub Pages**：仓库 Settings → Pages →
-   Source 选 "Deploy from a branch" → Branch 选 `main`、目录选 `/docs` → Save。
-   一两分钟后地图就在 `https://<你的用户名>.github.io/bayarea-rental-map/` 上线。
-
-4. **验证定时任务**：仓库 Actions 标签页 → 左侧"每日抓取更新租房地图" →
-   "Run workflow" 手动跑一次。绿色对勾 = 成功；之后每天加州早上 6:30–7:30 自动运行。
-   > 注意：fork 的仓库或长期无活动的仓库，GitHub 可能自动暂停定时任务，
-   > Actions 页面出现提示时点一下 "Enable" 即可。
+> 域名的 MX 记录和 SPF TXT 记录是 Namecheap 的邮箱转发，跟网站无关，**不要删**。
 
 ## 工作原理
 
@@ -76,18 +72,66 @@
 
 ## 手动更新数据
 
+### 操作步骤
+
+**1. 打开"终端"**
+
+按 `Command + 空格`，输入 `终端` 或 `Terminal`，回车。
+
+**2. 复制粘贴这两行，回车**
+
 ```bash
+cd ~/github/bayarea-rental-map
 ./update.sh
 ```
 
-会依次同步远端、抓取两个论坛、提交并推送，一两分钟后 https://askaibay.com 生效。
-首次运行会自动建好 Python 环境。想起来就跑一次，不跑也没关系——已有房源不会因为
-没更新而消失。
+（以后再更新只要按方向键 `↑` 就能翻出上次的命令，不用重新打字。）
 
-**为什么需要手动跑**：chineseinsfbay 用 Cloudflare 挡掉了 GitHub Actions 所在的
-机房 IP（返回 200 但 body 为空，换 UA、加 header、带 cookie 全都没用），只有住宅
-网络能正常访问。云端的每日任务照常跑，负责 bay123；cis 的新帖要靠本机跑 `update.sh`
-才能进来。某个论坛整个抓挂时，脚本不会淘汰它的房源，所以数据不会被悄悄删光。
+**3. 等 1–3 分钟，看到这样的输出就是成功了**
+
+```
+同步远端…
+
+开始抓取（1–3 分钟，请稍候）…
+[bay123] 240 threads on list pages
+[cis] 180 threads on list pages
+done: 457 points on map | fetched 3 new, reused 255, failed 0, ...
+
+推送到 GitHub…
+
+完成：房源 456 → 457 条，约 1 分钟后 https://askaibay.com 生效。
+```
+
+**4. 一分钟后打开 https://askaibay.com 确认**
+
+看右下角"数据更新于"那行的时间变成刚才的时间，就说明新数据上线了。
+如果时间没变，多半是浏览器缓存，按 `Command + Shift + R` 强制刷新。
+
+### 多久跑一次
+
+想起来就跑，**没有硬性要求**。不跑也不会出问题：已有房源不会因为没更新而消失，
+云端每天还会自动更新 bay123 的部分。如果你自己正在找房，隔一两天跑一次比较合适；
+只是挂着给别人用，一周跑一两次也够。
+
+### 可能遇到的情况
+
+| 屏幕上出现 | 什么意思 | 怎么办 |
+|---|---|---|
+| `数据没有变化，无需推送。` | 论坛这段时间没有新帖 | 正常，不用管 |
+| `cis 这次一条都没抓到` | 论坛那边暂时不通 | 过几小时再跑一次；已有房源不会被删 |
+| `zsh: permission denied: ./update.sh` | 脚本丢了执行权限 | 跑一次 `chmod +x update.sh` |
+| `同步失败` / `推送失败` | 网络不通或 GitHub 出问题 | 过一会儿重跑；实在不行跑 `git status` 看看 |
+| 抓取脚本报错退出 | 论坛可能改版了 | 把屏幕上的报错信息发给 Claude |
+
+脚本**只会提交房源数据文件**，你在这个目录里改的任何其它东西都不会被它带上去。
+抓取失败时不会提交，所以不用担心把坏数据推上线。
+
+### 为什么需要手动跑
+
+chineseinsfbay 用 Cloudflare 挡掉了 GitHub Actions 所在的机房 IP（返回 200 但 body
+为空，换 UA、加 header、带 cookie 全都没用），只有住宅网络能正常访问。云端的每日任务
+照常跑，负责 bay123；cis 的新帖要靠你在自己电脑上跑 `update.sh` 才能进来。
+某个论坛整个抓挂时，脚本不会淘汰它的房源，所以数据不会被悄悄删光。
 
 ## 本地预览
 
