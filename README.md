@@ -138,8 +138,11 @@ chineseinsfbay 用 Cloudflare 挡掉了 GitHub Actions 所在的机房 IP（返�
 
 ## 房东投稿
 
-除了抓论坛，房东可以直接在地图上提交房源。你审核通过后才会显示。
-需要建一个 Google 表单（一次性，约 10 分钟）。
+除了抓论坛，房东可以直接在地图上提交房源，**表单就在网页上**，
+房东全程不用离开 askaibay.com、不用注册。你审核通过后才会显示在地图上。
+
+背后用 Google 表单存数据（静态网站没有后端），但房东看不到 Google 的界面——
+页面把填好的内容直接 POST 给表单的接收地址。设置是一次性的，跑个脚本 + 点两下。
 
 ### 一、自动建好表单和表格
 
@@ -186,11 +189,29 @@ chineseinsfbay 用 Cloudflare 挡掉了 GitHub Actions 所在的机房 IP（返�
 
 ### 四、把两个网址给我
 
-- **表单填写地址**（脚本日志里打印的第一个，形如 `https://docs.google.com/forms/d/e/.../viewform`）
-- **上一步的 CSV 网址**（形如 `https://docs.google.com/spreadsheets/d/e/2PACX-.../pub?...&output=csv`）
+脚本日志里有一段用 `--- 把下面这段整个复制给 Claude ---` 框起来的内容，形如：
 
-我把它们填进 `docs/index.html` 的 `SUBMIT_URL` 和 `scraper/scrape.py` 的 `SUBMISSIONS_CSV`，
-地图上就会出现"我有房子出租"的按钮。
+```js
+window.FORM_ACTION = 'https://docs.google.com/forms/d/e/.../formResponse';
+window.FORM_ENTRIES = { "title": "entry.123456", ... };
+```
+
+把这一段、加上第二步复制的 **CSV 网址**，一起发给 Claude。它们分别填进
+`docs/index.html` 顶部和 `scraper/scrape.py` 的 `SUBMISSIONS_CSV`，
+地图上就会出现"我有房子出租"按钮，点开是页面内的填写表单。
+
+### 页面内表单是怎么工作的
+
+静态网站没有后端，收不了表单。做法是：页面上是我们自己的表单（样式、文案、校验都自己控制），
+点提交时动态建一个隐藏的 `<form>`，POST 到 Google 表单的 `formResponse` 地址，
+用一个隐藏 `iframe` 接住响应。
+
+- 为什么用 iframe 而不是 `fetch`：Google 那个地址不返回 CORS 头，`fetch` 读不到结果；
+  iframe 提交完全不受跨域限制，还能靠它的 `load` 事件知道提交完成。
+- iframe 的 `load` 偶尔不触发，所以加了 4 秒兜底，超时也显示成功。
+- 提交前在本地校验：标题/城市/联系方式必填、邮编必须是湾区五位、租金必须是数字、
+  必须勾选公开确认。
+- 没有验证码，靠你的人工审核挡垃圾投稿。真被刷了再说，加验证码需要引第三方脚本。
 
 ### 日常怎么用
 

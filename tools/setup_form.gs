@@ -94,13 +94,61 @@ function setup() {
   note.getRange('A6').setValue('5. 只发布「上线」这一张表，不要发布整个表格');
   note.setColumnWidth(1, 520);
 
+  // 网站上的表单要直接把数据发给 Google，需要每个问题的 entry 编号。
+  // 生成一个预填链接，从里面把编号解析出来——这是唯一可靠的拿法。
+  var entries = readEntryIds(form);
+
   Logger.log('=========== 建好了 ===========');
-  Logger.log('表单填写地址（给房东）: ' + form.getPublishedUrl());
-  Logger.log('表单编辑地址（你自己改问题用）: ' + form.getEditUrl());
   Logger.log('回复表格: ' + ss.getUrl());
+  Logger.log('表单编辑地址（想改问题措辞用）: ' + form.getEditUrl());
+  Logger.log('');
+  Logger.log('--- 把下面这段整个复制给 Claude ---');
+  Logger.log("window.FORM_ACTION = '" +
+             form.getPublishedUrl().replace(/\/viewform.*$/, '/formResponse') + "';");
+  Logger.log('window.FORM_ENTRIES = ' + JSON.stringify(entries, null, 2) + ';');
+  Logger.log('--- 复制到这里为止 ---');
   Logger.log('');
   Logger.log('还差一步：打开上面的表格 → 文件 → 共享 → 发布到网络');
-  Logger.log('  左边选「上线」，右边格式选「逗号分隔值 (.csv)」，点发布，复制网址');
+  Logger.log('  左边选「上线」，右边格式选「逗号分隔值 (.csv)」，点发布，把网址也给 Claude');
+}
+
+/** 用预填链接反查每个问题的 entry 编号 */
+function readEntryIds(form) {
+  var probe = {
+    title: '__T__', price: '__P__', city: '__C__', zip: '__Z__',
+    kind: null, contact: '__X__', note: '__N__', link: '__L__', agree: null
+  };
+  var order = ['title', 'price', 'city', 'zip', 'kind', 'contact', 'note', 'link', 'agree'];
+  var items = form.getItems();
+  var resp = form.createResponse();
+  for (var i = 0; i < items.length && i < order.length; i++) {
+    var key = order[i], it = items[i], type = it.getType();
+    if (type === FormApp.ItemType.MULTIPLE_CHOICE) {
+      var choices = it.asMultipleChoiceItem().getChoices();
+      resp = resp.withItemResponse(
+          it.asMultipleChoiceItem().createResponse(choices[0].getValue()));
+    } else if (type === FormApp.ItemType.PARAGRAPH_TEXT) {
+      resp = resp.withItemResponse(it.asParagraphTextItem().createResponse(probe[key]));
+    } else {
+      resp = resp.withItemResponse(it.asTextItem().createResponse(probe[key]));
+    }
+  }
+  var url = resp.toPrefilledUrl();
+  var out = {};
+  var pairs = url.split('?')[1].split('&');
+  var byValue = {'__T__': 'title', '__P__': 'price', '__C__': 'city', '__Z__': 'zip',
+                 '__X__': 'contact', '__N__': 'note', '__L__': 'link'};
+  var choiceEntries = [];
+  for (var j = 0; j < pairs.length; j++) {
+    var kv = pairs[j].split('=');
+    if (kv[0].indexOf('entry.') !== 0) continue;
+    var val = decodeURIComponent(kv[1].replace(/\+/g, ' '));
+    if (byValue[val]) out[byValue[val]] = kv[0];
+    else choiceEntries.push(kv[0]);          // 两个单选题：出租类型、公开确认
+  }
+  if (choiceEntries.length > 0) out.kind = choiceEntries[0];
+  if (choiceEntries.length > 1) out.agree = choiceEntries[1];
+  return out;
 }
 
 function columnLetter(n) {

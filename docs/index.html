@@ -8,7 +8,10 @@
 <script>
   window.GA_ID = 'G-N9KT8B9DRX';
   // 房东投稿的 Google 表单地址；留空则页面上不显示投稿入口
-  window.SUBMIT_URL = '';
+  // 房东投稿：表单直接做在本页，提交时发给 Google 表单的接收地址。
+  // 这两项由 tools/setup_form.gs 运行后打印出来，填上才会出现投稿按钮。
+  window.FORM_ACTION = '';
+  window.FORM_ENTRIES = {};
   window.dataLayer = window.dataLayer || [];
   function gtag(){dataLayer.push(arguments);}
   // 没填 ID、或者在本地 localhost 打开时，不加载也不上报
@@ -55,6 +58,39 @@
   .popup-owner{display:inline-block;background:#eaf2fd;color:#1a5fb4;border:1px solid #c7ddf7;
     border-radius:4px;padding:1px 6px;font-size:11px;margin-bottom:5px}
   .popup-contact{font-weight:600;color:#222}
+
+  /* ---- 页面内的投稿表单 ---- */
+  #mask{display:none;position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,.45)}
+  #mask.on{display:block}
+  #form-card{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    background:#fff;border-radius:12px;width:min(440px,calc(100vw - 28px));
+    max-height:min(88vh,760px);overflow-y:auto;-webkit-overflow-scrolling:touch;
+    padding:20px 22px calc(20px + env(safe-area-inset-bottom));
+    box-shadow:0 10px 40px rgba(0,0,0,.3)}
+  #form-card h2{margin:0 0 4px;font-size:17px}
+  #form-card .lead{color:#777;font-size:12px;line-height:1.6;margin-bottom:14px}
+  #form-card label{display:block;margin:11px 0 4px;font-size:13px;color:#333;font-weight:600}
+  #form-card label .req{color:#d93636;font-weight:400}
+  #form-card .tip{font-weight:400;color:#999;font-size:11px;margin-left:4px}
+  #form-card input[type=text],#form-card textarea,#form-card select{
+    width:100%;box-sizing:border-box;font:inherit;font-size:14px;
+    border:1px solid #d6d9de;border-radius:7px;padding:9px 10px;background:#fff}
+  #form-card input:focus,#form-card textarea:focus,#form-card select:focus{
+    outline:none;border-color:#1a6fd4;box-shadow:0 0 0 3px rgba(26,111,212,.14)}
+  #form-card textarea{min-height:72px;resize:vertical}
+  #form-card .warn{background:#fff8e6;border:1px solid #f2e0b5;border-radius:7px;
+    padding:9px 11px;font-size:12px;color:#7a5c17;line-height:1.6;margin:13px 0 4px}
+  #agree-row{display:flex;gap:8px;align-items:flex-start;margin:12px 0 0;font-size:12px;color:#444}
+  #agree-row input{width:17px;height:17px;flex:0 0 auto;margin-top:1px}
+  #form-actions{display:flex;gap:9px;margin-top:16px}
+  #form-actions button{flex:1;font:inherit;font-size:14px;border-radius:8px;
+    padding:11px;cursor:pointer;border:1px solid #d6d9de;background:#f4f5f7;color:#333}
+  #form-actions button#do-submit{background:#1a6fd4;border-color:#1a6fd4;color:#fff;font-weight:600}
+  #form-actions button#do-submit:disabled{background:#9bbbe6;border-color:#9bbbe6;cursor:default}
+  #form-err{color:#d93636;font-size:12px;margin-top:9px;min-height:1em;line-height:1.5}
+  #form-done{display:none;text-align:center;padding:14px 4px}
+  #form-done .big{font-size:34px;margin-bottom:8px}
+  #form-done p{color:#555;font-size:13px;line-height:1.7;margin:0 0 16px}
   .leaflet-popup-content{margin:10px 14px;max-width:240px}
 
   /* 抽屉的关闭按钮，只在窄屏出现 */
@@ -107,6 +143,67 @@
 <body>
 <div id="map"></div>
 <button id="fab">筛选 · <b id="fab-count">…</b> 条房源</button>
+
+<div id="mask">
+  <div id="form-card">
+    <div id="form-body">
+      <h2>免费发布房源</h2>
+      <div class="lead">填完提交，我们看过之后显示在地图上，通常一天内。不用注册。</div>
+
+      <label>房源标题 <span class="req">*</span></label>
+      <input type="text" id="f-title" maxlength="60"
+             placeholder="例：Fremont 主卧带独卫，近 Ohlone College">
+
+      <label>每月租金 <span class="tip">填数字，面议可留空</span></label>
+      <input type="text" id="f-price" inputmode="numeric" placeholder="1800">
+
+      <label>城市 / 地区 <span class="req">*</span></label>
+      <input type="text" id="f-city" placeholder="例：Fremont、屋仑、San Jose">
+
+      <label>邮编 <span class="tip">填了地图上位置更准</span></label>
+      <input type="text" id="f-zip" inputmode="numeric" maxlength="5" placeholder="94539">
+
+      <label>出租类型</label>
+      <select id="f-kind">
+        <option value="">不限 / 未填</option>
+        <option>整租</option><option>单间</option><option>合租</option>
+      </select>
+
+      <label>联系方式 <span class="req">*</span></label>
+      <input type="text" id="f-contact" placeholder="微信号 / 邮箱 / 电话">
+
+      <div class="warn">⚠️ 你填的内容<b>全部会公开显示在地图上</b>，包括联系方式，任何人都能看到。
+        建议填微信号；不想公开手机号就别填手机号。</div>
+
+      <label>房源说明 <span class="tip">地图上显示前 120 字</span></label>
+      <textarea id="f-note" maxlength="500"
+                placeholder="位置、交通、家具、入住要求等"></textarea>
+
+      <label>详情链接 <span class="tip">原帖或相册，没有可不填</span></label>
+      <input type="text" id="f-link" placeholder="https://">
+
+      <div id="agree-row">
+        <input type="checkbox" id="f-agree">
+        <label for="f-agree" style="margin:0;font-weight:400;font-size:12px">
+          我确认以上信息（含联系方式）可以公开显示在地图上</label>
+      </div>
+
+      <div id="form-err"></div>
+      <div id="form-actions">
+        <button id="do-cancel" type="button">取消</button>
+        <button id="do-submit" type="button">提交</button>
+      </div>
+    </div>
+
+    <div id="form-done">
+      <div class="big">✅</div>
+      <h2>收到了，谢谢！</h2>
+      <p>我们看过之后会显示在地图上，通常一天内。<br>房子租出去了记得告诉我们下架。</p>
+      <div id="form-actions"><button id="do-close" type="button">关闭</button></div>
+    </div>
+  </div>
+</div>
+<iframe name="form-sink" id="form-sink" style="display:none" title="submit target"></iframe>
 <div class="panel" id="panel">
   <button id="close" aria-label="关闭">&times;</button>
   <h1>湾区租房地图</h1>
@@ -136,7 +233,7 @@
     </div>
   </div>
   <div id="submit-box" style="display:none">
-    <a id="submit-link" href="#" target="_blank" rel="noopener">我有房子出租 →</a>
+    <a id="submit-link" href="#">我有房子出租 →</a>
     <div class="hint">免费发布，审核后显示在地图上。<br>你填写的联系方式会公开显示，请自行斟酌。</div>
   </div>
   <div class="note">共 <b id="total"></b> 条房源。位置按帖子中的邮编/城市定位（近似位置，同区房源已散开），点击圆点看详情和原帖链接。<br>数据更新于：<b id="updated">加载中…</b></div>
@@ -241,14 +338,100 @@ document.addEventListener('click', e=>{
   });
 })();
 
-// 投稿入口：只有配置了表单地址才显示
+// 房东投稿：表单就在本页，提交时把数据 POST 给 Google 表单的接收地址。
+// 用隐藏 iframe 承接响应——Google 那个地址不带 CORS 头，fetch 读不到结果，
+// iframe 提交则完全不受影响，还能靠它的 load 事件知道提交完成了。
 (function(){
-  if (!window.SUBMIT_URL) return;
+  const E = window.FORM_ENTRIES || {};
+  if (!window.FORM_ACTION || !E.title) return;   // 没配好就不显示入口
+
   const box = document.getElementById('submit-box');
-  const a = document.getElementById('submit-link');
-  a.href = SUBMIT_URL;
+  const trigger = document.getElementById('submit-link');
+  const mask = document.getElementById('mask');
+  const card = document.getElementById('form-card');
+  const errBox = document.getElementById('form-err');
+  const btn = document.getElementById('do-submit');
+  const sink = document.getElementById('form-sink');
   box.style.display = 'block';
-  a.addEventListener('click', () => track('click_submit'));
+
+  const F = {
+    title:  document.getElementById('f-title'),
+    price:  document.getElementById('f-price'),
+    city:   document.getElementById('f-city'),
+    zip:    document.getElementById('f-zip'),
+    kind:   document.getElementById('f-kind'),
+    contact:document.getElementById('f-contact'),
+    note:   document.getElementById('f-note'),
+    link:   document.getElementById('f-link'),
+  };
+
+  function open(e){
+    if (e) e.preventDefault();
+    mask.classList.add('on');
+    document.getElementById('form-body').style.display = '';
+    document.getElementById('form-done').style.display = 'none';
+    track('open_submit_form');
+  }
+  function close(){ mask.classList.remove('on'); }
+
+  trigger.addEventListener('click', open);
+  document.getElementById('do-cancel').addEventListener('click', close);
+  document.getElementById('do-close').addEventListener('click', close);
+  mask.addEventListener('click', e => { if (e.target === mask) close(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+
+  function check(){
+    if (!F.title.value.trim()) return ['房源标题要填一下', F.title];
+    if (!F.city.value.trim())  return ['城市要填一下，不然地图上放不了', F.city];
+    if (!F.contact.value.trim()) return ['联系方式要填一下，不然看房的人找不到你', F.contact];
+    const z = F.zip.value.trim();
+    if (z && !/^9[45]\d{3}$/.test(z)) return ['邮编看起来不像湾区的五位邮编', F.zip];
+    const p = F.price.value.trim();
+    if (p && !/^\$?\s*\d{3,5}$/.test(p)) return ['租金请填数字，比如 1800', F.price];
+    if (!document.getElementById('f-agree').checked)
+      return ['请勾选确认——你填的内容会公开显示', null];
+    return null;
+  }
+
+  btn.addEventListener('click', () => {
+    const bad = check();
+    errBox.textContent = '';
+    if (bad){ errBox.textContent = bad[0]; if (bad[1]) bad[1].focus(); return; }
+
+    // 用一个真的 <form> 提交到隐藏 iframe，避开跨域限制
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = window.FORM_ACTION;
+    form.target = 'form-sink';
+    form.style.display = 'none';
+    const put = (name, value) => {
+      if (!name) return;
+      const i = document.createElement('input');
+      i.type = 'hidden'; i.name = name; i.value = value;
+      form.appendChild(i);
+    };
+    for (const k in F) put(E[k], F[k].value.trim());
+    put(E.agree, '我确认');
+    document.body.appendChild(form);
+
+    btn.disabled = true; btn.textContent = '提交中…';
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      btn.disabled = false; btn.textContent = '提交';
+      document.getElementById('form-body').style.display = 'none';
+      document.getElementById('form-done').style.display = 'block';
+      card.scrollTop = 0;
+      for (const k in F) F[k].value = '';
+      document.getElementById('f-agree').checked = false;
+      form.remove();
+      track('submit_listing', {city: F.city.value || ''});
+    };
+    sink.addEventListener('load', finish, {once:true});
+    setTimeout(finish, 4000);   // iframe 的 load 偶尔不触发，兜底
+    form.submit();
+  });
 })();
 
 // 手机上把筛选面板收成底部抽屉：点悬浮按钮拉起，点关闭/点地图收回
