@@ -1,13 +1,14 @@
 {
- "updated": "2026-09-09 14:37 UTC",
+ "updated": "2026-09-10 14:35 UTC",
  "points": 571,
  "submissions": 0,
  "pending": 0,
  "listed": {
-  "bay123": 238,
+  "bay123": 0,
   "cis": 0
  },
  "down": [
+  "bay123",
   "cis"
  ]
 }
